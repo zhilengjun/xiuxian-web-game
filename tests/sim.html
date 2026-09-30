@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>洪荒修仙 · 平衡模拟</title>
+  <style>
+    body { background: #0b0e1a; color: #ccc; font-family: monospace; padding: 24px; }
+    h2 { color: #d8c27a; margin: 0 0 4px; }
+    .hint { color: #6b769a; font-size: 12px; margin-bottom: 14px; }
+    pre { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+    table { border-collapse: collapse; font-size: 13px; margin: 8px 0 16px; }
+    td, th { border: 1px solid #2a3350; padding: 4px 10px; text-align: right; }
+    th { color: #d8c27a; }
+    td:first-child, th:first-child { text-align: left; }
+  </style>
+</head>
+<body>
+  <h2>洪荒修仙 · 无头平衡模拟（tests/sim.html）</h2>
+  <div class="hint">
+    双击本文件即跑（零 Node / 零构建）。用**脚本化 bot** 驱动 HX.World（不渲染、不碰输入事件），
+    每个皮肤 × N 个种子各跑一整局，输出胜率 / 用时 / 承伤等指标，用于校验 GDD 附录 A-5 平衡初判。
+    bot 是朴素 AI：保持中距离走位 + 躲弹幕时冲刺 + 能量满就放大招 —— 它的水平有限，结论看**相对值**。
+  </div>
+  <pre id="out">运行中…</pre>
+
+  <!-- 被测源码：与 index.html 同源同序 -->
+  <script src="../src/core/namespace.js"></script>
+  <script src="../src/core/rng.js"></script>
+  <script src="../src/core/pool.js"></script>
+  <script src="../src/core/loop.js"></script>
+  <script src="../src/core/camera.js"></script>
+  <script src="../src/core/audio.js"></script>
+  <script src="../src/math/vec.js"></script>
+  <script src="../src/math/collision.js"></script>
+  <script src="../src/config/constants.js"></script>
+  <script src="../src/config/palette.js"></script>
+  <script src="../src/config/skins.js"></script>
+  <script src="../src/config/parts.js"></script>
+  <script src="../src/config/texts.js"></script>
+  <script src="../src/config/balance.js"></script>
+  <script src="../src/config/enemies.js"></script>
+  <script src="../src/config/boss.js"></script>
+  <script src="../src/config/waves.js"></script>
+  <script src="../src/entities/player.js"></script>
+  <script src="../src/entities/enemy.js"></script>
+  <script src="../src/entities/boss.js"></script>
+  <script src="../src/entities/bullet.js"></script>
+  <script src="../src/entities/pillar.js"></script>
+  <script src="../src/entities/pickup.js"></script>
+  <script src="../src/systems/world.js"></script>
+  <script src="../src/systems/movement.js"></script>
+  <script src="../src/systems/spawn.js"></script>
+  <script src="../src/systems/enemy.js"></script>
+  <script src="../src/systems/skill.js"></script>
+  <script src="../src/systems/combat.js"></script>
+  <script src="../src/systems/boss.js"></script>
+
+  <script>
+  (function () {
+    var HX = window.HX;
+    var DT = HX.C.FIXED_DT;
+    var MAX_STEPS = 60 * 420;          // 单局上限 7 分钟（GDD 期望 3~5 分钟 + 余量）
+
+    // ---------- 朴素 bot ----------
+    // 策略：与最近威胁保持 KEEP 距离（7 身位）——太近后退、太远靠近、否则绕圈；
+    //       敌方弹幕逼近（<240px 且在接近）时垂直方向冲刺；能量满立刻放大招；
+    //       无威胁且附近有灵石时过去捡。
+    var KEEP = HX.C.PLAYER.visualR * 2 * 7;
+
+    function botIntent(w) {
+      var p = w.player;
+      var mv = { moveX: 0, moveY: 0, dash: false, ult: true };
+
+      // 地火预警圈没爆发 → 立刻跑出圈（沿径向向外）
+      for (var h = 0; h < w.hazards.length; h++) {
+        var hz = w.hazards[h];
+        if (hz.erupted) continue;
+        var hx0 = p.pos.x - hz.pos.x, hy0 = p.pos.y - hz.pos.y;
+        var hd = Math.hypot(hx0, hy0) || 1;
+        if (hd < hz.r + 60) { mv.moveX = hx0 / hd; mv.moveY = hy0 / hd; return mv; }
+      }
+
+      // 躲弹幕优先：找最近的一颗"正在朝玩家飞"的敌方弹幕（结界内空间小，反应窗口要大）
+      var danger = null, dangerD = 350 * 350;
+      var list = w.ebullets;
+      for (var i = 0; i < list.length; i++) {
+        var b = list[i];
+        var bx = b.pos.x - p.pos.x, by = b.pos.y - p.pos.y;
+        var bd2 = bx * bx + by * by;
+        var closing = (b.vel.x * -bx + b.vel.y * -by) > 0;
+        if (bd2 < dangerD && closing) { dangerD = bd2; danger = b; }
+      }
+      if (danger && p.dashCd <= 0) {
+        // 垂直于弹道方向冲刺（选远离弹幕的一侧）
+        var bl = Math.hypot(danger.vel.x, danger.vel.y) || 1;
+        var px = -danger.vel.y / bl, py = danger.vel.x / bl;
+        var side = ((p.pos.x - danger.pos.x) * px + (p.pos.y - danger.pos.y) * py) >= 0 ? 1 : -1;
+        mv.moveX = px * side; mv.moveY = py * side;
+        mv.dash = true;
+        return mv;
+      }
+
+      var threat = HX.World.nearestEnemy(w, p.pos.x, p.pos.y, Infinity, null, true);
+      var td = Infinity;
+      if (threat) {
+        var tx = threat.pos.x - p.pos.x, ty = threat.pos.y - p.pos.y;
+        td = Math.hypot(tx, ty) || 1;
+        var nx = tx / td, ny = ty / td;
+        if (td < KEEP * 0.8) { mv.moveX = -nx; mv.moveY = -ny; }          // 太近：拉开
+        else if (td > KEEP * 1.3) { mv.moveX = nx; mv.moveY = ny; }       // 太远：靠近
+        else { mv.moveX = -ny; mv.moveY = nx; }                            // 合适：绕圈走位
+
+        // 贴身突围：结界里被逼近且无弹幕可躲时，径向冲刺拉开（防被贴墙磨死）
+        if (td < 240 && p.dashCd <= 0) mv.dash = true;
+
+        // 顺手捡灵石：威胁较远时过去
+        var bestPk = null, bestD = 700 * 700;
+        for (var k = 0; k < w.pickups.length; k++) {
+          var pk = w.pickups[k];
+          var rx = pk.pos.x - p.pos.x, ry = pk.pos.y - p.pos.y;
+          var rd = rx * rx + ry * ry;
+          if (rd < bestD) { bestD = rd; bestPk = pk; }
+        }
+        if (bestPk && td > 900) {
+          var lx = bestPk.pos.x - p.pos.x, ly = bestPk.pos.y - p.pos.y;
+          var ll = Math.hypot(lx, ly) || 1;
+          mv.moveX = lx / ll; mv.moveY = ly / ll;
+        }
+      }
+
+      // 结界墙角自救：移动方向撞向结界边时，把该轴分量转为"沿边向场地中心"
+      if (w.pillarRect && (mv.moveX !== 0 || mv.moveY !== 0)) {
+        var r0 = w.pillarRect, mg = HX.C.PILLAR.rectMargin + 40;
+        var nearL = p.pos.x < r0.x0 + mg, nearR = p.pos.x > r0.x1 - mg;
+        var nearT = p.pos.y < r0.y0 + mg, nearB = p.pos.y > r0.y1 - mg;
+        if ((nearL && mv.moveX < 0) || (nearR && mv.moveX > 0)) {
+          mv.moveX = 0;
+          mv.moveY = p.pos.y < (r0.y0 + r0.y1) / 2 ? 1 : -1;
+        }
+        if ((nearT && mv.moveY < 0) || (nearB && mv.moveY > 0)) {
+          mv.moveY = 0;
+          mv.moveX = p.pos.x < (r0.x0 + r0.x1) / 2 ? 1 : -1;
+        }
+      }
+      return mv;
+    }
+
+    // ---------- 跑一整局 ----------
+    function playOne(skinId, seed) {
+      var w = HX.World.create({ seed: seed, skinId: skinId });
+      var steps = 0;
+      while (!w.outcome && steps < MAX_STEPS) {
+        HX.World.step(w, DT, botIntent(w));
+        steps++;
+      }
+      return {
+        skin: skinId, seed: seed,
+        outcome: w.outcome || 'timeout',
+        sec: w.time,
+        hpLeft: w.player.hp,
+        level: w.player.level,
+        kills: w.stats.kills,
+        dmgDealt: Math.round(w.stats.dmgDealt),
+        dmgTaken: Math.round(w.stats.dmgTaken)
+      };
+    }
+
+    // ---------- 批量跑 + 汇总 ----------
+    var SEEDS = [1, 2, 3, 4, 5];
+    var rows = [];
+    var out = document.getElementById('out');
+    var html = [];
+    var okAll = true;
+
+    for (var s = 0; s < HX.SKIN_ORDER.length; s++) {
+      var skinId = HX.SKIN_ORDER[s];
+      var games = [];
+      for (var i = 0; i < SEEDS.length; i++) games.push(playOne(skinId, SEEDS[i]));
+      var wins = 0, rages = 0, downs = 0, timeouts = 0;
+      var secSum = 0, secN = 0, takenSum = 0, dealtSum = 0, lvSum = 0;
+      for (var g = 0; g < games.length; g++) {
+        var r = games[g];
+        if (r.outcome === 'win') { wins++; secSum += r.sec; secN++; }
+        else if (r.outcome === 'rage') rages++;
+        else if (r.outcome === 'down') downs++;
+        else timeouts++;
+        takenSum += r.dmgTaken; dealtSum += r.dmgDealt; lvSum += r.level;
+        rows.push(r);
+      }
+      html.push('<table>');
+      html.push('<tr><th>' + HX.SKINS[skinId].name + '</th><th>种子</th><th>结果</th><th>用时</th><th>等级</th><th>击杀</th><th>总输出</th><th>总承伤</th></tr>');
+      for (var g2 = 0; g2 < games.length; g2++) {
+        var r2 = games[g2];
+        html.push('<tr><td>' + skinId + '</td><td>#' + r2.seed + '</td><td>' + r2.outcome +
+          '</td><td>' + r2.sec.toFixed(0) + 's</td><td>Lv' + r2.level + '</td><td>' + r2.kills +
+          '</td><td>' + r2.dmgDealt + '</td><td>' + r2.dmgTaken + '</td></tr>');
+      }
+      html.push('<tr><th>汇总</th><th>' + games.length + ' 局</th><th>胜' + wins + ' / 狂暴负' + rages +
+        ' / 阵亡' + downs + ' / 超时' + timeouts + '</th><th>' + (secN ? (secSum / secN).toFixed(0) + 's' : '-') +
+        '</th><th>Lv' + (lvSum / games.length).toFixed(1) + '</th><th>-</th><th>' + Math.round(dealtSum / games.length) +
+        '</th><th>' + Math.round(takenSum / games.length) + '</th></tr>');
+      html.push('</table>');
+    }
+
+    // ---------- 结论与软校验 ----------
+    var winRows = rows.filter(function (r) { return r.outcome === 'win'; });
+    var lines = [];
+    lines.push('总局数 ' + rows.length + '（' + HX.SKIN_ORDER.length + ' 皮肤 × ' + SEEDS.length + ' 种子）');
+    lines.push('胜利 ' + winRows.length +
+      '、狂暴判负 ' + rows.filter(function (r) { return r.outcome === 'rage'; }).length +
+      '、阵亡 ' + rows.filter(function (r) { return r.outcome === 'down'; }).length +
+      '、超时 ' + rows.filter(function (r) { return r.outcome === 'timeout'; }).length);
+    if (winRows.length) {
+      var avg = winRows.reduce(function (a, r) { return a + r.sec; }, 0) / winRows.length;
+      lines.push('获胜局平均用时 ' + avg.toFixed(0) + 's（GDD 期望 3~5 分钟 = 180~300s）');
+      lines.push((avg >= HX.BAL.session.minSec * 0.5 && avg <= HX.BAL.session.maxSec)
+        ? '✓ 平均用时落在合理区间'
+        : '⚠ 平均用时偏离 GDD 期望区间 —— 需调参（蜘蛛/术士/BOSS 血量或玩家伤害）');
+    } else {
+      lines.push('⚠ 没有获胜局 —— bot 太弱或数值过难，需人工复核');
+      okAll = false;
+    }
+    lines.push('');
+    lines.push('注意：bot 为朴素 AI（会吃地火、不会绕石柱），承伤偏高是预期；调参看相对趋势而非绝对值。');
+
+    out.innerHTML = html.join('\n') + '\n\n' + lines.join('\n');
+    out.style.color = okAll ? '#7ee787' : '#ffd27e';
+    document.title = okAll ? 'SIM-OK wins=' + winRows.length : 'SIM-DONE wins=' + winRows.length;
+    window.HX.lastSim = { rows: rows, wins: winRows.length };
+  })();
+  </script>
+</body>
+</html>

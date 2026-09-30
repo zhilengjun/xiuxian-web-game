@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>洪荒修仙 · Demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #05070f; overflow: hidden; }
+    body { display: flex; align-items: center; justify-content: center; }
+    #game { display: block; background: #0b0f1c; box-shadow: 0 0 60px rgba(90, 140, 220, 0.16); }
+    #boot { position: fixed; left: 14px; bottom: 10px; color: #46506e; font: 12px/1.5 monospace; user-select: none; }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="1920" height="1080"></canvas>
+  <div id="boot">零构建 · 双击 index.html 即跑 · F1 调试面板</div>
+
+  <!--
+    加载顺序即依赖顺序（classic <script>，无 ES Module，file:// 可直接跑）：
+      namespace → core → math → config → entities → systems → scenes → ui → render → main
+    新增文件必须按依赖插到正确位置（README §6）。
+  -->
+  <script src="src/core/namespace.js"></script>
+
+  <!-- core：引擎无关基础设施 -->
+  <script src="src/core/rng.js"></script>
+  <script src="src/core/pool.js"></script>
+  <script src="src/core/loop.js"></script>
+  <script src="src/core/input.js"></script>
+  <script src="src/core/camera.js"></script>
+  <script src="src/core/audio.js"></script>
+
+  <!-- math：向量 + 唯一碰撞实现 -->
+  <script src="src/math/vec.js"></script>
+  <script src="src/math/collision.js"></script>
+
+  <!-- config：全部数值与配色（数据驱动） -->
+  <script src="src/config/constants.js"></script>
+  <script src="src/config/palette.js"></script>
+  <script src="src/config/skins.js"></script>
+  <script src="src/config/parts.js"></script>
+  <script src="src/config/texts.js"></script>
+  <script src="src/config/balance.js"></script>
+  <script src="src/config/enemies.js"></script>
+  <script src="src/config/boss.js"></script>
+  <script src="src/config/waves.js"></script>
+
+  <!-- entities：纯数据 + 极薄方法（行为在 systems） -->
+  <script src="src/entities/player.js"></script>
+  <script src="src/entities/enemy.js"></script>
+  <script src="src/entities/boss.js"></script>
+  <script src="src/entities/bullet.js"></script>
+  <script src="src/entities/pillar.js"></script>
+  <script src="src/entities/pickup.js"></script>
+
+  <!-- systems：世界推进与玩法规则（不含渲染）—— 顺序 = 依赖顺序 -->
+  <script src="src/systems/world.js"></script>
+  <script src="src/systems/movement.js"></script>
+  <script src="src/systems/spawn.js"></script>
+  <script src="src/systems/enemy.js"></script>
+  <script src="src/systems/skill.js"></script>
+  <script src="src/systems/combat.js"></script>
+  <script src="src/systems/boss.js"></script>
+
+  <!-- scenes：状态机各状态 -->
+  <script src="src/scenes/menu.js"></script>
+  <script src="src/scenes/skins.js"></script>
+  <script src="src/scenes/battle.js"></script>
+  <script src="src/scenes/result.js"></script>
+
+  <!-- ui / render：HUD 与绘制层 -->
+  <script src="src/ui/home_bg.js"></script>
+  <script src="src/ui/hud.js"></script>
+  <script src="src/render/sprites.js"></script>
+  <script src="src/render/art.js"></script>
+  <script src="src/render/renderer.js"></script>
+
+  <!-- main：引导代码（必须最后） -->
+  <script src="src/main.js"></script>
+
+  <script>
+    (function () {
+      var canvas = document.getElementById('game');
+      if (!window.HX || !HX.main) {
+        document.getElementById('boot').textContent = '加载失败：HX.main 未就绪，检查 src/ 脚本路径';
+        return;
+      }
+      try {
+        HX.main.start(canvas);
+      } catch (e) {
+        document.getElementById('boot').textContent = '启动失败：' + (e && e.message ? e.message : e);
+        throw e;
+      }
+    })();
+  </script>
+</body>
+</html>

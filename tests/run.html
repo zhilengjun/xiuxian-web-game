@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>洪荒修仙 · 测试</title>
+  <style>
+    body { background: #0b0e1a; color: #ccc; font-family: monospace; padding: 24px; }
+    h2 { color: #d8c27a; margin-bottom: 4px; }
+    .hint { color: #6b769a; font-size: 12px; margin-bottom: 14px; }
+    pre { font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h2>洪荒修仙 · 单元测试 / 集成测试</h2>
+  <div class="hint">双击本文件即跑（零 Node / 零构建）。加载顺序：src 模块 → 断言框架 → 各 test_*.js（按 AGENTS §9）。</div>
+  <pre id="out">运行中…</pre>
+
+  <!-- 1) 被测源码（与 index.html 同源，避免「测试通过但线上不一致」） -->
+  <script src="../src/core/namespace.js"></script>
+  <script src="../src/core/rng.js"></script>
+  <script src="../src/core/pool.js"></script>
+  <script src="../src/core/loop.js"></script>
+  <script src="../src/core/camera.js"></script>
+  <script src="../src/core/audio.js"></script>
+  <script src="../src/math/vec.js"></script>
+  <script src="../src/math/collision.js"></script>
+  <script src="../src/config/constants.js"></script>
+  <script src="../src/config/palette.js"></script>
+  <script src="../src/config/skins.js"></script>
+  <script src="../src/config/parts.js"></script>
+  <script src="../src/config/texts.js"></script>
+  <script src="../src/config/balance.js"></script>
+  <script src="../src/config/enemies.js"></script>
+  <script src="../src/config/boss.js"></script>
+  <script src="../src/config/waves.js"></script>
+
+  <script src="../src/entities/player.js"></script>
+  <script src="../src/entities/enemy.js"></script>
+  <script src="../src/entities/boss.js"></script>
+  <script src="../src/entities/bullet.js"></script>
+  <script src="../src/entities/pillar.js"></script>
+  <script src="../src/entities/pickup.js"></script>
+
+  <!-- systems：世界推进与玩法规则（不含渲染），顺序 = 依赖顺序 -->
+  <script src="../src/systems/world.js"></script>
+  <script src="../src/systems/movement.js"></script>
+  <script src="../src/systems/spawn.js"></script>
+  <script src="../src/systems/enemy.js"></script>
+  <script src="../src/systems/skill.js"></script>
+  <script src="../src/systems/combat.js"></script>
+  <script src="../src/systems/boss.js"></script>
+
+  <!-- 资源层（阶段 1 起纳入冒烟范围） -->
+  <script src="../src/render/sprites.js"></script>
+  <script src="../src/render/art.js"></script>
+
+  <!-- 2) 断言框架 -->
+  <script src="assert.js"></script>
+
+  <!-- 3) 测试用例（新增用例文件后在此追加一行） -->
+  <script src="unit/test_math.js"></script>
+  <script src="unit/test_rng.js"></script>
+  <script src="unit/test_config.js"></script>
+  <script src="unit/test_art.js"></script>
+  <script src="integration/test_world.js"></script>
+  <script src="integration/test_boss.js"></script>
+
+  <script>
+    HX.runTests(document.getElementById('out'));
+  </script>
+</body>
+</html>

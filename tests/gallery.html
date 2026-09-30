@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>洪荒修仙 · 资源画廊（阶段 1）</title>
+  <style>
+    html, body { margin: 0; background: #05070f; color: #c8d4ea; font-family: monospace; }
+    #wrap { width: 1440px; margin: 0 auto; }
+    #gallery { display: block; background: #0a0f1c; }
+    #status { display: none; position: fixed; left: 0; top: 0; z-index: 99; margin: 0; padding: 6px 10px;
+              background: #400; color: #ffb3ab; font: 12px/1.5 monospace; max-width: 100%; white-space: pre-wrap; }
+    #audio { padding: 16px 18px 34px; }
+    #audio h3 { color: #d8c27a; margin: 8px 0 10px; font-size: 15px; }
+    #audio button {
+      margin: 3px 6px 3px 0; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      background: #16203a; color: #cfe3ff; border: 1px solid #2c4370; font-family: inherit; font-size: 13px;
+    }
+    #audio button:hover { background: #1f2f52; border-color: #4d7ac0; }
+    .hint { color: #5f6b8c; font-size: 12px; margin-top: 12px; line-height: 1.85; }
+    .hint b { color: #9fe8ff; }
+  </style>
+</head>
+<body>
+<!-- 诊断：必须早于一切业务脚本注册（含外部脚本的加载期错误） -->
+<pre id="status"></pre>
+<script>
+  (function () {
+    var el = document.getElementById('status');
+    window.__log = [];
+    window.__status = function (msg) {
+      window.__log.push(msg);
+      if (el) { el.style.display = 'block'; el.textContent = window.__log.join('\n'); }
+      document.title = window.__log.length ? ('GALLERY ' + window.__log.join(' ; ')) : 'GALLERY OK';
+    };
+    window.onerror = function (m, src, line, col) {
+      window.__status('ONERROR ' + m + ' @' + (src || '').split('/').pop() + ':' + line + ':' + col);
+      return false;
+    };
+    window.__status('boot');
+  })();
+</script>
+
+<div id="wrap">
+  <canvas id="gallery" width="1440" height="2760"></canvas>
+  <div id="audio">
+    <h3>音效试听（全部由 WebAudio 现场合成，零音频文件）</h3>
+    <div id="btns"></div>
+    <div class="hint">
+      首次点击需用户手势才能解锁音频（浏览器自动播放策略）。<br />
+      本页只加载 src/ 的美术与音效模块，不启动游戏循环 —— 用于「资源先行」验收。<br />
+      <b>表现层模型（GDD §3.3）</b>：地面是斜俯视平面（格网/落点/范围圈/弹幕都贴地），
+      角色·怪物·障碍·灵石是<b>从地面锚点向上生长的侧视立绘</b>，脚下带落地阴影（类似《饥荒》）。
+      实体 pos 就是那个锚点，碰撞仍是锚点处的圆（GDD §14）。
+    </div>
+  </div>
+</div>
+
+<!-- 只加载资源相关模块（美术 + 音效 + 数据 + 实体），不加载 main.js -->
+<script src="../src/core/namespace.js"></script>
+<script src="../src/core/rng.js"></script>
+<script src="../src/core/audio.js"></script>
+<script src="../src/math/vec.js"></script>
+<script src="../src/config/constants.js"></script>
+<script src="../src/config/palette.js"></script>
+<script src="../src/config/skins.js"></script>
+<script src="../src/config/texts.js"></script>
+<script src="../src/config/balance.js"></script>
+<script src="../src/config/enemies.js"></script>
+<script src="../src/config/boss.js"></script>
+<script src="../src/config/waves.js"></script>
+<script src="../src/entities/player.js"></script>
+<script src="../src/entities/enemy.js"></script>
+<script src="../src/entities/boss.js"></script>
+<script src="../src/entities/bullet.js"></script>
+<script src="../src/entities/pillar.js"></script>
+<script src="../src/entities/pickup.js"></script>
+<script src="../src/render/sprites.js"></script>
+<script src="../src/render/art.js"></script>
+
+<script>
+(function () {
+  var HX = window.HX;
+  var cv = document.getElementById('gallery');
+  var ctx = cv.getContext('2d');
+  var COLS = 3, CELL_W = cv.width / COLS, ROW_H = 240, TOP = 104;
+  var ROWS = 11;
+
+  function resetT() { ctx.setTransform(1, 0, 0, 1, 0, 0); }
+
+  // 每一格：裁剪到格子矩形（否则 BOSS 的超大气场会糊满整页），再按倍率缩放。
+  // ⚠ 全项目统一 px：art/sprites 直接吃像素坐标，这里只按 k 做显示倍率（不再有单位换算）。
+  function cell(col, row, k, fn) {
+    var cx = CELL_W * (col + 0.5);
+    // 锚点放在行的偏下位置：立绘从锚点向上生长，这样才不会被行顶裁掉
+    var cy = TOP + ROW_H * row + ROW_H * 0.78;
+    resetT();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(CELL_W * col + 3, TOP + ROW_H * row + 3, CELL_W - 6, ROW_H - 6);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(120,160,230,0.035)';
+    ctx.fillRect(CELL_W * col + 3, TOP + ROW_H * row + 3, CELL_W - 6, ROW_H - 6);
+    ctx.setTransform(k, 0, 0, k, cx, cy);
+    fn();
+    resetT();
+    ctx.restore();
+  }
+
+  function label(col, row, title, sub) {
+    resetT();
+    ctx.textAlign = 'center';
+    ctx.font = '700 15px sans-serif';
+    ctx.fillStyle = '#9fe8ff';
+    ctx.fillText(title, CELL_W * (col + 0.5), TOP + ROW_H * row + 22);
+    if (sub) {
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#6b769a';
+      ctx.fillText(sub, CELL_W * (col + 0.5), TOP + ROW_H * row + 40);
+    }
+  }
+
+  function section(rowIndex, text) {
+    resetT();
+    ctx.textAlign = 'left';
+    ctx.font = '800 16px sans-serif';
+    ctx.fillStyle = '#d8c27a';
+    ctx.fillText(text, 22, TOP + ROW_H * rowIndex - 12);
+  }
+
+  // ---------- 资源实例（走实体工厂，保证与游戏内同源） ----------
+  var skinIds = ['yujian', 'nanming', 'jiuxiao'];
+  var players = skinIds.map(function (id) { return HX.makePlayer(id, 0, 0); });
+  var facingDemo = HX.makePlayer('yujian', 0, 0);
+
+  var spider = HX.makeEnemy('spider', 0, 0);
+  spider.vel = { x: 30, y: 0 };
+  var spiderTele = HX.makeEnemy('spider', 0, 0); spiderTele.telegraphing = true; spiderTele.telegraph = 0.5;
+  var spiderHurt = HX.makeEnemy('spider', 0, 0); spiderHurt.hp = 15; spiderHurt.hitFlash = 0.06;
+  var wizard = HX.makeEnemy('wizard', 0, 0);
+  var wizardPara = HX.makeEnemy('wizard', 0, 0); wizardPara.paraTimer = 0.8;
+  var anchorDemo = HX.makeEnemy('wizard', 0, 0);
+
+  var bossN = HX.makeBoss(0, 0);
+  var bossP = HX.makeBoss(0, 0); bossP.phase = HX.BOSS.PHASE.PILLAR;
+  var bossE = HX.makeBoss(0, 0);
+  bossE.phase = HX.BOSS.PHASE.ENRAGE; bossE.scale = HX.BOSS.enrage.scale; bossE.invuln = true;
+
+  var pillarDark = HX.makePillar(0, 0, 0);
+  var pillarLit = HX.makePillar(1, 0, 0);
+  var stone = HX.makePickup('guardStone', 0, 0);
+  var hzWarn = { kind: 'warn', pos: { x: 0, y: 0 }, r: 1.5, delay: 1.0, age: 0.55, dmg: 25 };
+  var firePatch = { pos: { x: 0, y: 0 }, r: 0.8, age: 1.2, life: 5 };
+
+  function mkBullet(style, side) {
+    return HX.Bullet.init({}, {
+      style: style, side: side || 'player', x: 0, y: 0, vx: 1, vy: 0, dmg: 10, life: 6,
+      visualR: (side === 'enemy') ? HX.C.EBULLET.visualR : HX.C.PBULLET.visualR
+    });
+  }
+  var B = {
+    sword: mkBullet('sword'), fire: mkBullet('fire'), thunder: mkBullet('thunder'),
+    enemy: mkBullet('enemy', 'enemy'), tracking: mkBullet('tracking', 'enemy'), phoenix: mkBullet('phoenix')
+  };
+
+  function mkFx(type, extra) {
+    var o = { type: type, pos: { x: 0, y: 0 }, age: 0, life: 0.5, alive: true };
+    for (var k in extra) o[k] = extra[k];
+    return o;
+  }
+  var F = {
+    spark: mkFx('spark', { r: 0.2, color: HX.PAL.fx.hit, life: 0.45 }),
+    ring: mkFx('ring', { r0: 0.2, r1: 1.6, color: '#9fe8ff', life: 0.6 }),
+    text: mkFx('text', { text: '-15', color: HX.PAL.fx.text, life: 0.9 }),
+    arc: mkFx('arc', {
+      points: [{ x: -1.1, y: 0.3 }, { x: -0.2, y: -0.4 }, { x: 0.7, y: 0.2 }, { x: 1.5, y: -0.35 }],
+      color: HX.PAL.skins.jiuxiao.accent, life: 0.35
+    }),
+    ignite: mkFx('ignite', { from: { x: -0.8, y: 0.4 }, to: { x: 1.1, y: -0.5 }, life: 1.0 })
+  };
+
+  // ---------- 绘制 ----------
+  function render(t) {
+    resetT();
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    var g = ctx.createLinearGradient(0, 0, 0, cv.height);
+    g.addColorStop(0, '#0a1020');
+    g.addColorStop(1, '#060a14');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, cv.width, cv.height);
+
+    resetT();
+    ctx.textAlign = 'left';
+    ctx.font = '800 26px sans-serif';
+    ctx.fillStyle = '#f2e2b0';
+    ctx.fillText('洪荒修仙 · 资源画廊', 22, 44);
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#6b769a';
+    ctx.fillText('全部资源由代码绘制 / 现场合成（零图片、零音频文件）· 与游戏内共用同一套实体工厂与绘制函数', 22, 68);
+    ctx.fillStyle = '#8fa3c8';
+    ctx.fillText('表现层：斜俯视地面平面 + 侧视立绘（billboard）· 立绘从地面锚点向上生长，脚下有落地阴影', 22, 88);
+
+    // ── A 玩家 ──
+    section(0, 'A · 玩家 · 三套皮肤（GDD §7）· 侧视立绘，脚下锚点 = 逻辑位置');
+    skinIds.forEach(function (id, i) {
+      var skin = HX.SKINS[id];
+      label(i, 0, skin.name, skin.pos);
+      players[i].side = 1;
+      players[i].vel = { x: 40, y: 0 };
+      cell(i, 0, 0.40, function () { HX.Art.drawPlayer(ctx, players[i], id, t); });
+    });
+
+    section(1, 'A2 · 朝向：只做左右两侧 —— 上下移动保持原本的左右朝向平移（2026-09-15 设计者指示）');
+    label(0, 1, '左右朝向（御剑飞仙）', 'side=+1 朝右 / side=-1 朝左（镜像）；纯上下移动不切立绘');
+    cell(0, 1, 0.26, function () {
+      var sides = [1, -1];
+      var names = ['朝右', '朝左'];
+      for (var i = 0; i < sides.length; i++) {
+        facingDemo.side = sides[i];
+        facingDemo.pos.x = (i - 0.5) * 2.0;
+        HX.Art.drawPlayer(ctx, facingDemo, 'yujian', t);
+      }
+    });
+    label(1, 1, '上下移动 = 保持原朝向平移', '左：朝右后向上走 · 右：朝左后向下走（立绘不翻转）');
+    cell(1, 1, 0.26, function () {
+      facingDemo.side = 1;
+      facingDemo.pos.x = -1.0;
+      facingDemo.vel = { x: 0, y: -40 };
+      HX.Art.drawPlayer(ctx, facingDemo, 'yujian', t);
+      facingDemo.side = -1;
+      facingDemo.pos.x = 1.0;
+      facingDemo.vel = { x: 0, y: 40 };
+      HX.Art.drawPlayer(ctx, facingDemo, 'yujian', t);
+    });
+
+    // 锚点与判定圆对照：说明 "pos 是脚下，碰撞是锚点处的圆"
+    label(1, 1, '锚点 / 判定圆对照', '十字 = 地面锚点(pos)，虚圆 = 判定半径(0.7×外观)');
+    cell(1, 1, 0.34, function () {
+      HX.Art.drawEnemy(ctx, anchorDemo, t);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, anchorDemo.solidR, anchorDemo.solidR * HX.C.PLANE_SQUASH, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(-14, 0); ctx.lineTo(14, 0);
+      ctx.moveTo(0, -14); ctx.lineTo(0, 14);
+      ctx.stroke();
+      ctx.restore();
+    });
+
+    // ── B 小怪 ──
+    section(2, 'B · 小怪（GDD §11）· 移速均低于玩家 5.0u/s');
+    label(0, 2, '血魔蛛', 'hp30 · 4.5u/s · 接触自爆 15（低伏造型）');
+    cell(0, 2, 0.85, function () { HX.Art.drawEnemy(ctx, spider, t); });
+    label(1, 2, '血魔蛛 · 自爆前摇', '前摇 0.5s 变红闪烁');
+    cell(1, 2, 0.85, function () { HX.Art.drawEnemy(ctx, spiderTele, t); });
+    label(2, 2, '血魔蛛 · 受击 + 血条', '掉血后才显示血条');
+    cell(2, 2, 0.85, function () { HX.Art.drawEnemy(ctx, spiderHurt, t); });
+
+    label(0, 3, '邪修术士', 'hp50 · 2.0u/s · 风筝 6~8 身位（漂浮）');
+    cell(0, 3, 0.55, function () { HX.Art.drawEnemy(ctx, wizard, t); });
+    label(1, 3, '邪修术士 · 被雷池麻痹', '麻痹期间不移动不开火');
+    cell(1, 3, 0.55, function () { HX.Art.drawEnemy(ctx, wizardPara, t); });
+    label(2, 3, '吞天老祖 · 普通阶段', 'hp9000 · 外观宽 3.0u（768px）· 悬浮');
+    cell(2, 3, 0.15, function () { HX.Art.drawBoss(ctx, bossN, t); });
+
+    label(0, 4, '吞天老祖 · 石柱阶段', '65% 血触发 · 追加追踪弹');
+    cell(0, 4, 0.15, function () { HX.Art.drawBoss(ctx, bossP, t); });
+    label(1, 4, '吞天老祖 · 狂暴', '4 柱全燃 → 无敌 · 放大 1.5×');
+    cell(1, 4, 0.15, function () { HX.Art.drawBoss(ctx, bossE, t); });
+    label(2, 4, '石柱：暗态 → 点燃', '不可攻击不可摧毁 · 燃＝顶端火焰窜起');
+    cell(2, 4, 0.23, function () {
+      ctx.save(); ctx.translate(-0.82, 0); HX.Art.drawPillar(ctx, pillarDark, t); ctx.restore();
+      pillarLit.lit = true; pillarLit.litAt = t - 3;
+      ctx.save(); ctx.translate(0.82, 0); HX.Art.drawPillar(ctx, pillarLit, t); ctx.restore();
+    });
+
+    // ── C 地面物件 ──
+    section(5, 'C · 地面物件：护身灵石 / 地火（GDD §9 / §13.2）· 预警圈贴地，火舌向上');
+    label(0, 5, '护身灵石', '无碰撞 · 自动拾取 1.5u · 小怪 30% 掉');
+    cell(0, 5, 0.62, function () { HX.Art.drawPickup(ctx, stone, t); });
+    label(1, 5, '地火 · 预警（延迟 1 秒）', '斜俯视下是椭圆；填充随延迟推进');
+    hzWarn.age = (t * 1.1) % 1.3;
+    cell(1, 5, 0.14, function () { HX.Art.drawHazard(ctx, hzWarn, t); });
+    label(2, 5, '地火 · 成型灼烧', '伤害 25 · 半径 1.5u（贴地灼痕 + 火舌）');
+    cell(2, 5, 0.14, function () {
+      HX.Art.drawHazard(ctx, { kind: 'fire', pos: { x: 0, y: 0 }, r: 1.5, delay: 1, age: 0.3 }, t);
+    });
+
+    // ── D 弹幕 ──
+    section(6, 'D · 弹幕（保持地面平面绘制，GDD §14：判定 = 外观 0.7×）· 统一速度 ' + HX.C.BULLET_SPEED + ' px/s（暂定）');
+    var b1 = [['sword', '御剑术 · 飞剑', '射程 12u 超远 · 自动锁敌'],
+              ['fire', '离火术 · 火球', '6→8 向 · 命中范围爆炸'],
+              ['thunder', '雷链术 · 电弧', '传导数量不限 · 伤害递减']];
+    b1.forEach(function (d, i) {
+      label(i, 6, d[1], d[2]);
+      cell(i, 6, 0.45, function () { HX.Art.drawBullets(ctx, { bullets: [B[d[0]]] }, t); });
+    });
+    var b2 = [['enemy', '敌方弹幕（血魔蛛/术士/BOSS）', '外观 0.2u · 带地面阴影暗示高度'],
+              ['tracking', '追踪弹 · BOSS 石柱阶段', '带轻微追踪 · 命中点燃石柱'],
+              ['phoenix', '火凤燎原 · 大招弹体', '宽 3 · 长 20 · 残留火焰']];
+    b2.forEach(function (d, i) {
+      label(i, 7, d[1], d[2]);
+      cell(i, 7, 0.45, function () { HX.Art.drawBullets(ctx, { ebullets: [B[d[0]]] }, t); });
+    });
+
+    // ── E 特效 ──
+    section(8, 'E · 特效原语（阶段 2 由 systems 在事件点生成；平面环用椭圆投影）');
+    var e1 = [['spark', '命中火花 spark', '撞击/受击'], ['ring', '冲击环 ring', '爆炸 / 大招落地'], ['text', '飘字 text', '伤害数字']];
+    F.spark.age = (t * 2.2) % F.spark.life;
+    F.ring.age = (t * 1.7) % F.ring.life;
+    F.text.age = (t * 1.1) % F.text.life;
+    e1.forEach(function (d, i) {
+      label(i, 8, d[1], d[2]);
+      cell(i, 8, i === 1 ? 0.30 : 0.5, function () { HX.Art.drawEffects(ctx, { effects: [F[d[0]]] }, t); });
+    });
+    var e2 = [['arc', '雷链电弧 arc', '传导路径折线'], ['ignite', '点火火球 ignite', '玩家 → 未点燃石柱'], null];
+    F.arc.age = (t * 3.0) % F.arc.life;
+    F.ignite.age = (t * 1.0) % F.ignite.life;
+    e2.forEach(function (d, i) {
+      if (!d) return;
+      label(i, 9, d[1], d[2]);
+      cell(i, 9, i === 0 ? 0.28 : 0.42, function () { HX.Art.drawEffects(ctx, { effects: [F[d[0]]] }, t); });
+    });
+    firePatch.age = (t * 1.3) % firePatch.life;
+    label(2, 9, '残火 fire（火痕 / 火凤残留）', '痕迹 5 秒 · 每 0.5s 伤害 5');
+    cell(2, 9, 0.24, function () { HX.Art.drawFire(ctx, firePatch, t); });
+
+    // ── F 护身技 ──
+    section(10, 'F · 护身技视觉（GDD §7 / §9：拾取灵石后生效 15 秒）· 范围贴地、剑竖直');
+    var gd = [['御剑 · 本命法剑', '地面椭圆轨道 · 1 秒/圈 · 每把伤害 8'],
+              ['南明 · 踏焰留痕', '脚下离火环 · 火痕 5 秒 · 每 0.5s 伤害 5'],
+              ['九霄 · 雷池', '地面椭圆范围 · 半径 3 · 每 2 秒麻痹 1 秒']];
+    gd.forEach(function (d, i) {
+      var pl = players[i];
+      pl.guardTimer = 10;
+      pl.guardOrbit = t * Math.PI * 2 * (i === 0 ? 1 : 0.15);
+      pl.side = 1;
+      pl.vel = { x: 0, y: 0 };
+      label(i, 10, d[0], d[1]);
+      cell(i, 10, i === 2 ? 0.17 : 0.26, function () {
+        HX.Art.drawPlayer(ctx, pl, skinIds[i], t);
+        HX.Art.drawGuard(ctx, pl, skinIds[i], t);
+      });
+    });
+
+    resetT();
+    ctx.textAlign = 'left';
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#4d7ac0';
+    ctx.fillText('渲染完成 · 无运行期错误', 22, TOP + ROW_H * ROWS + 4);
+    window.__gallery = { ok: true };
+    requestAnimationFrame(function (ms) { render(ms / 1000); });
+  }
+
+  try {
+    render(0);
+    if (window.__log.length <= 1) {
+      document.getElementById('status').style.display = 'none';
+      document.title = 'GALLERY-OK';
+    }
+  } catch (e) {
+    window.__status('BOOT-THROW: ' + (e && e.message) + ' | ' + String(e && e.stack).split('\n').slice(0, 4).join(' <- '));
+  }
+
+  // ---------- 音效面板 ----------
+  var names = Object.keys(HX.Audio.recipes);
+  var box = document.getElementById('btns');
+  names.forEach(function (n) {
+    var b = document.createElement('button');
+    b.textContent = n;
+    b.onclick = function () { HX.Audio.init(); HX.Audio.resume(); HX.Audio.play(n); };
+    box.appendChild(b);
+  });
+  var bAll = document.createElement('button');
+  bAll.textContent = '▶ 顺序播放全部';
+  bAll.onclick = function () {
+    HX.Audio.init(); HX.Audio.resume();
+    names.forEach(function (n, i) { setTimeout(function () { HX.Audio.play(n); }, i * 950); });
+  };
+  box.appendChild(bAll);
+})();
+</script>
+</body>
+</html>
