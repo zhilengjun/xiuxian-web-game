@@ -2,6 +2,8 @@
 
 > AI辅助开发：2D 轻量弹幕生存 · 修仙题材 · 浏览器直跑 Demo
 
+# [点击体验](!https://zhilengjun.github.io/xiuxian-web-game/)
+
 ## 项目由来
 
 这是一道招聘测试题的作答。
